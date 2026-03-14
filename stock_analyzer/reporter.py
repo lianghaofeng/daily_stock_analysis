@@ -7,7 +7,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from .constants import CHECK_FAIL, CHECK_PASS, CHECK_WARN
 from .models import AnalysisReport, MarketOverview, Trend
 
 logger = logging.getLogger(__name__)

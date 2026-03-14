@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import abc
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 from .constants import DEFAULT_HISTORY_DAYS
@@ -229,8 +229,6 @@ def _parse_date(val: object) -> date:
     s = str(val).split(" ")[0]
     for fmt in ("%Y-%m-%d", "%Y%m%d", "%Y/%m/%d"):
         try:
-            from datetime import datetime
-
             return datetime.strptime(s, fmt).date()
         except ValueError:
             continue

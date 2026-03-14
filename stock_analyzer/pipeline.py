@@ -10,7 +10,7 @@ from typing import Optional
 from .ai_analyzer import AIAnalyzer
 from .config import Config
 from .fetcher import BaseFetcher, create_fetcher
-from .models import AnalysisReport, StockCode
+from .models import OHLCV, AnalysisReport, StockCode, StockQuote
 from .notifier import send_all
 from .reporter import generate_report, save_report
 from .technical import analyze_trend
@@ -142,7 +142,7 @@ class Pipeline:
         )
         return report
 
-    def _fetch_history(self, stock: StockCode) -> list:
+    def _fetch_history(self, stock: StockCode) -> list[OHLCV]:
         """Fetch history with error handling."""
         try:
             return self._fetcher.fetch_history(stock, self._config.history_days)
@@ -150,7 +150,7 @@ class Pipeline:
             logger.error("Failed to fetch history for %s: %s", stock.display, e)
             return []
 
-    def _fetch_quote(self, stock: StockCode):
+    def _fetch_quote(self, stock: StockCode) -> Optional[StockQuote]:
         """Fetch quote with error handling (non-fatal)."""
         try:
             return self._fetcher.fetch_quote(stock)

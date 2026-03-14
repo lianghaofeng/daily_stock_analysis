@@ -69,19 +69,22 @@ def analyze_trend(history: list[OHLCV]) -> TrendAnalysis:
 
 def _compute_indicators(closes: list[float]) -> TechnicalIndicators:
     """Compute all technical indicators from close prices."""
+    macd_line, signal, hist = _macd_all(closes)
+    boll_upper, boll_mid, boll_lower = _bollinger_bands(closes, BOLL_PERIOD, BOLL_STD_DEV)
+
     return TechnicalIndicators(
         ma5=_sma(closes, MA_FAST),
         ma10=_sma(closes, MA_MID),
         ma20=_sma(closes, MA_SLOW),
         ma60=_sma(closes, MA_LONG) if len(closes) >= MA_LONG else 0.0,
-        macd=_ema(closes, MACD_FAST) - _ema(closes, MACD_SLOW),
-        macd_signal=_macd_signal(closes),
-        macd_hist=_macd_histogram(closes),
+        macd=macd_line,
+        macd_signal=signal,
+        macd_hist=hist,
         rsi_6=_rsi(closes, RSI_FAST),
         rsi_14=_rsi(closes, RSI_STANDARD),
-        boll_upper=_bollinger(closes, BOLL_PERIOD, BOLL_STD_DEV, "upper"),
-        boll_mid=_sma(closes, BOLL_PERIOD),
-        boll_lower=_bollinger(closes, BOLL_PERIOD, BOLL_STD_DEV, "lower"),
+        boll_upper=boll_upper,
+        boll_mid=boll_mid,
+        boll_lower=boll_lower,
     )
 
 
@@ -229,44 +232,66 @@ def _ema(data: list[float], period: int) -> float:
     return ema_val
 
 
-def _macd_signal(closes: list[float]) -> float:
-    """MACD signal line (EMA of MACD line)."""
-    if len(closes) < MACD_SLOW + MACD_SIGNAL:
-        return 0.0
+def _macd_all(closes: list[float]) -> tuple[float, float, float]:
+    """Compute MACD line, signal, and histogram in a single O(N) pass.
 
-    # Compute MACD line for each point
-    macd_values: list[float] = []
-    for i in range(MACD_SLOW, len(closes) + 1):
-        segment = closes[:i]
-        macd_val = _ema(segment, MACD_FAST) - _ema(segment, MACD_SLOW)
-        macd_values.append(macd_val)
+    Returns (macd_line, signal_line, histogram) for the latest point.
+    """
+    if len(closes) < MACD_SLOW:
+        return 0.0, 0.0, 0.0
 
+    # Build full EMA series incrementally (O(N) each)
+    ema_fast_series = _ema_series(closes, MACD_FAST)
+    ema_slow_series = _ema_series(closes, MACD_SLOW)
+
+    # MACD line series (from MACD_SLOW onward where both EMAs exist)
+    macd_values = [
+        ema_fast_series[i] - ema_slow_series[i]
+        for i in range(len(ema_slow_series))
+    ]
+
+    macd_line = macd_values[-1] if macd_values else 0.0
+
+    # Signal line = EMA of MACD values
     if len(macd_values) < MACD_SIGNAL:
-        return 0.0
+        return macd_line, 0.0, macd_line
 
-    return _ema(macd_values, MACD_SIGNAL)
+    signal = _ema(macd_values, MACD_SIGNAL)
+    return macd_line, signal, macd_line - signal
 
 
-def _macd_histogram(closes: list[float]) -> float:
-    """MACD histogram (MACD - Signal)."""
-    macd_line = _ema(closes, MACD_FAST) - _ema(closes, MACD_SLOW)
-    signal = _macd_signal(closes)
-    return macd_line - signal
+def _ema_series(data: list[float], period: int) -> list[float]:
+    """Compute full EMA series in O(N). Returns one value per input point from period onward."""
+    if len(data) < period:
+        return []
+
+    multiplier = 2 / (period + 1)
+    ema_val = sum(data[:period]) / period  # SMA seed
+    result = [ema_val]
+
+    for price in data[period:]:
+        ema_val = (price - ema_val) * multiplier + ema_val
+        result.append(ema_val)
+
+    return result
 
 
 def _rsi(closes: list[float], period: int) -> float:
-    """Relative Strength Index."""
+    """Relative Strength Index (single-pass)."""
     if len(closes) < period + 1:
         return 50.0
 
-    changes = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
-    recent = changes[-period:]
+    total_gain = 0.0
+    total_loss = 0.0
+    for i in range(-period, 0):
+        change = closes[i] - closes[i - 1]
+        if change > 0:
+            total_gain += change
+        elif change < 0:
+            total_loss -= change
 
-    gains = [c for c in recent if c > 0]
-    losses = [-c for c in recent if c < 0]
-
-    avg_gain = sum(gains) / period if gains else 0.0
-    avg_loss = sum(losses) / period if losses else 0.0
+    avg_gain = total_gain / period
+    avg_loss = total_loss / period
 
     if avg_loss == 0:
         return 100.0
@@ -274,21 +299,19 @@ def _rsi(closes: list[float], period: int) -> float:
     return 100.0 - (100.0 / (1.0 + rs))
 
 
-def _bollinger(
-    closes: list[float], period: int, num_std: float, band: str
-) -> float:
-    """Bollinger Band value."""
+def _bollinger_bands(
+    closes: list[float], period: int, num_std: float
+) -> tuple[float, float, float]:
+    """Compute Bollinger Bands (upper, mid, lower) in a single pass."""
     if len(closes) < period:
-        return 0.0
+        return 0.0, 0.0, 0.0
 
     recent = closes[-period:]
     mean = sum(recent) / period
     variance = sum((x - mean) ** 2 for x in recent) / period
     std = variance**0.5
 
-    if band == "upper":
-        return mean + num_std * std
-    return mean - num_std * std
+    return mean + num_std * std, mean, mean - num_std * std
 
 
 def _volume_ratio(volumes: list[float], period: int = 5) -> Optional[float]:

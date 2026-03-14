@@ -8,7 +8,7 @@ import time
 from typing import Optional
 
 from .config import AIConfig
-from .constants import API_MAX_DELAY, CHECK_FAIL, CHECK_PASS, CHECK_WARN
+from .constants import API_MAX_DELAY
 from .models import (
     AIAnalysis,
     OHLCV,
@@ -50,8 +50,6 @@ class AIAnalyzer:
 
     def __init__(self, config: AIConfig) -> None:
         self._config = config
-        self._client: object | None = None
-
     def analyze(
         self,
         stock: StockCode,

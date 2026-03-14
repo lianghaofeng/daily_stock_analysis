@@ -7,7 +7,7 @@ import logging
 import sys
 
 from . import __version__
-from .config import Config
+from .config import Config, split_csv
 from .pipeline import Pipeline
 
 
@@ -73,9 +73,7 @@ examples:
 
     # CLI overrides
     if args.stocks:
-        config.stock_codes = [
-            c.strip() for c in args.stocks.replace("，", ",").split(",") if c.strip()
-        ]
+        config.stock_codes = split_csv(args.stocks)
     if args.source:
         config.data_source = args.source
     if args.report_dir:

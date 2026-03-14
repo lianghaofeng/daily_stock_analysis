@@ -102,11 +102,7 @@ class Config:
             _load_dotenv(env_file)
 
         stock_codes_raw = os.getenv("STOCK_CODES", "")
-        stock_codes = [
-            c.strip()
-            for c in stock_codes_raw.replace("，", ",").split(",")
-            if c.strip()
-        ]
+        stock_codes = split_csv(stock_codes_raw)
 
         ai = AIConfig(
             api_key=os.getenv("AI_API_KEY", ""),
@@ -122,9 +118,7 @@ class Config:
         )
 
         email_receivers_raw = os.getenv("EMAIL_RECEIVERS", "")
-        email_receivers = [
-            r.strip() for r in email_receivers_raw.split(",") if r.strip()
-        ]
+        email_receivers = split_csv(email_receivers_raw)
 
         notify = NotifyConfig(
             webhook_url=os.getenv("WEBHOOK_URL", ""),
@@ -147,6 +141,11 @@ class Config:
             data_source=os.getenv("DATA_SOURCE", "akshare"),
             log_level=os.getenv("LOG_LEVEL", "INFO"),
         )
+
+
+def split_csv(raw: str) -> list[str]:
+    """Split a comma-separated string, supporting Chinese comma."""
+    return [c.strip() for c in raw.replace("，", ",").split(",") if c.strip()]
 
 
 def _load_dotenv(path: str) -> None:
