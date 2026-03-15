@@ -93,6 +93,47 @@ class Config:
         return errors
 
     @classmethod
+    def from_project(cls) -> Optional[Config]:
+        """Load configuration from the original project's Config singleton.
+
+        Returns None if the original project is not importable.
+        """
+        try:
+            from src.config import get_config
+
+            cfg = get_config()
+
+            ai = AIConfig(
+                api_key=getattr(cfg, "gemini_api_key", "") or "",
+                base_url=getattr(cfg, "gemini_base_url", "") or AIConfig.base_url,
+                model=getattr(cfg, "gemini_model", "") or AIConfig.model,
+                temperature=getattr(cfg, "gemini_temperature", TEMPERATURE_DEFAULT),
+                max_retries=getattr(cfg, "gemini_max_retries", API_MAX_RETRIES),
+                retry_delay=getattr(cfg, "gemini_retry_delay", API_BASE_DELAY),
+                provider="gemini",
+            )
+
+            stock_codes = list(getattr(cfg, "stock_list", []) or [])
+
+            notify = NotifyConfig(
+                webhook_url=getattr(cfg, "wechat_webhook_url", "") or "",
+                telegram_bot_token=getattr(cfg, "telegram_bot_token", "") or "",
+                telegram_chat_id=getattr(cfg, "telegram_chat_id", "") or "",
+                email_sender=getattr(cfg, "email_sender", "") or "",
+                email_password=getattr(cfg, "email_password", "") or "",
+                email_receivers=list(getattr(cfg, "email_receivers", []) or []),
+            )
+
+            return cls(
+                stock_codes=stock_codes,
+                ai=ai,
+                notify=notify,
+                data_source="auto",
+            )
+        except ImportError:
+            return None
+
+    @classmethod
     def from_env(cls, env_file: Optional[str] = None) -> Config:
         """Load configuration from environment variables.
 

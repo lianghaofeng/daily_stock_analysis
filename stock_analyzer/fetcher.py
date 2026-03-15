@@ -1,4 +1,7 @@
-"""Stock data fetching with pluggable backends."""
+"""Stock data fetching — delegates to original project's DataFetcherManager.
+
+Falls back to standalone fetchers when original project modules are unavailable.
+"""
 
 from __future__ import annotations
 
@@ -11,6 +14,28 @@ from .constants import DEFAULT_HISTORY_DAYS
 from .models import Market, OHLCV, StockCode, StockQuote
 
 logger = logging.getLogger(__name__)
+
+
+def create_fetcher(source: str = "auto") -> "BaseFetcher":
+    """Create the best available data fetcher.
+
+    Tries the original project's DataFetcherManager first (supports 5 data
+    sources with automatic failover). Falls back to a standalone AKShare or
+    yfinance fetcher when the original project is not on the import path.
+    """
+    if source == "auto":
+        try:
+            return ProjectFetcher()
+        except ImportError:
+            logger.info(
+                "Original data_provider not available, falling back to standalone AKShare"
+            )
+            return AKShareFetcher()
+
+    if source in ("akshare", "yfinance"):
+        return {"akshare": AKShareFetcher, "yfinance": YFinanceFetcher}[source]()
+
+    return ProjectFetcher()
 
 
 class BaseFetcher(abc.ABC):
@@ -32,12 +57,84 @@ class BaseFetcher(abc.ABC):
         """Data source name for logging."""
 
 
-class AKShareFetcher(BaseFetcher):
-    """Fetch data from AKShare (free, supports A-share and HK)."""
+# ──────────────────────────────────────────────────
+# Primary: reuse the original project's infrastructure
+# ──────────────────────────────────────────────────
+
+
+class ProjectFetcher(BaseFetcher):
+    """Delegates to the original project's DataFetcherManager.
+
+    Gives us access to 5 data sources (Efinance, AKShare, Tushare, Baostock,
+    yfinance) with automatic failover, rate limiting, and anti-ban logic —
+    all for free.
+    """
+
+    def __init__(self) -> None:
+        from data_provider.base import DataFetcherManager  # original project
+
+        self._manager = DataFetcherManager()
 
     @property
     def name(self) -> str:
-        return "akshare"
+        return "project-data-provider"
+
+    def fetch_history(
+        self, stock: StockCode, days: int = DEFAULT_HISTORY_DAYS
+    ) -> list[OHLCV]:
+        df, source_name = self._manager.get_daily_data(
+            stock_code=stock.code, days=days
+        )
+
+        logger.info(
+            "Fetched %d records for %s via %s", len(df), stock.display, source_name
+        )
+
+        result: list[OHLCV] = []
+        for _, row in df.iterrows():
+            result.append(
+                OHLCV(
+                    date=_to_date(row["date"]),
+                    open=float(row["open"]),
+                    high=float(row["high"]),
+                    low=float(row["low"]),
+                    close=float(row["close"]),
+                    volume=float(row["volume"]),
+                    turnover=float(row.get("amount", 0)),
+                )
+            )
+        return result
+
+    def fetch_quote(self, stock: StockCode) -> Optional[StockQuote]:
+        quote = self._manager.get_realtime_quote(stock.code)
+        if quote is None:
+            return None
+
+        return StockQuote(
+            code=stock.code,
+            name=getattr(quote, "name", stock.name) or stock.code,
+            price=float(getattr(quote, "price", 0)),
+            change_pct=float(getattr(quote, "change_pct", 0)),
+            volume=float(getattr(quote, "volume", 0)),
+            turnover=float(getattr(quote, "turnover", 0)),
+            high=float(getattr(quote, "high", 0)),
+            low=float(getattr(quote, "low", 0)),
+            open=float(getattr(quote, "open_price", 0)),
+            prev_close=float(getattr(quote, "prev_close", 0)),
+        )
+
+
+# ──────────────────────────────────────────────────
+# Fallback: standalone fetchers when running outside the project
+# ──────────────────────────────────────────────────
+
+
+class AKShareFetcher(BaseFetcher):
+    """Standalone AKShare fetcher for A-share and HK stocks."""
+
+    @property
+    def name(self) -> str:
+        return "akshare-standalone"
 
     def fetch_history(
         self, stock: StockCode, days: int = DEFAULT_HISTORY_DAYS
@@ -126,11 +223,11 @@ class AKShareFetcher(BaseFetcher):
 
 
 class YFinanceFetcher(BaseFetcher):
-    """Fetch data from Yahoo Finance (free, supports US stocks)."""
+    """Standalone yfinance fetcher for US stocks."""
 
     @property
     def name(self) -> str:
-        return "yfinance"
+        return "yfinance-standalone"
 
     def fetch_history(
         self, stock: StockCode, days: int = DEFAULT_HISTORY_DAYS
@@ -207,25 +304,22 @@ class YFinanceFetcher(BaseFetcher):
         return stock.code
 
 
-def create_fetcher(source: str) -> BaseFetcher:
-    """Factory function to create the appropriate data fetcher."""
-    fetchers = {
-        "akshare": AKShareFetcher,
-        "yfinance": YFinanceFetcher,
-    }
-    cls = fetchers.get(source.lower())
-    if cls is None:
-        available = ", ".join(fetchers.keys())
-        raise ValueError(
-            f"Unknown data source '{source}'. Available: {available}"
-        )
-    return cls()
+# ──────────────────────────────────────────────────
+# Helpers
+# ──────────────────────────────────────────────────
+
+
+def _to_date(val: object) -> date:
+    """Convert pandas Timestamp / datetime / date to date."""
+    if isinstance(val, datetime):
+        return val.date()
+    if isinstance(val, date):
+        return val
+    return _parse_date(val)
 
 
 def _parse_date(val: object) -> date:
-    """Parse various date formats to date object."""
-    if isinstance(val, date):
-        return val
+    """Parse various date string formats to date object."""
     s = str(val).split(" ")[0]
     for fmt in ("%Y-%m-%d", "%Y%m%d", "%Y/%m/%d"):
         try:

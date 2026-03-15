@@ -68,8 +68,10 @@ examples:
         datefmt="%H:%M:%S",
     )
 
-    # Load config
-    config = Config.from_env(args.env)
+    # Load config: try original project first, then .env
+    config = Config.from_project() or Config.from_env(args.env)
+    if config.data_source == "auto":
+        logging.info("Using original project infrastructure")
 
     # CLI overrides
     if args.stocks:
