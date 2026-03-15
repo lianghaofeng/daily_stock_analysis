@@ -1,10 +1,4 @@
-"""Multi-channel notification — delegates to the original project's NotificationService.
-
-The original project supports 8+ channels (WeChat, Feishu, Telegram, Email,
-Pushover, PushPlus, Discord, Custom Webhooks) with auto-detection and failover.
-We reuse that when available, and fall back to a minimal standalone
-implementation (webhook + Telegram + email) when running independently.
-"""
+"""Multi-channel notification — webhook, Telegram, email."""
 
 from __future__ import annotations
 
@@ -32,60 +26,10 @@ class NotifyResult:
 
 
 def send_all(config: NotifyConfig, title: str, content: str) -> list[NotifyResult]:
-    """Send notification to all enabled channels.
-
-    Tries the original project's NotificationService first (8+ channels).
-    Falls back to standalone senders when not available.
-    """
-    # Try original project's NotificationService first
-    results = _try_project_notify(title, content)
-    if results is not None:
-        return results
-
-    # Fallback: standalone minimal notification
-    return _standalone_send_all(config, title, content)
-
-
-def _try_project_notify(title: str, content: str) -> Optional[list[NotifyResult]]:
-    """Try using the original project's NotificationService."""
-    try:
-        from src.notification import NotificationService
-
-        service = NotificationService()
-        if not service.is_available():
-            return None
-
-        channel_names = service.get_channel_names()
-        logger.info("Using original NotificationService (%s)", channel_names)
-
-        # The original service has its own send methods for markdown
-        # We call send_to_all directly
-        success = service.send_to_all(content)
-        return [
-            NotifyResult(
-                channel=channel_names,
-                success=success,
-                error="" if success else "Send failed",
-            )
-        ]
-    except ImportError:
-        return None
-    except Exception as e:
-        logger.warning("Original NotificationService failed: %s", e)
-        return None
-
-
-# ──────────────────────────────────────────────────
-# Standalone fallback implementation
-# ──────────────────────────────────────────────────
-
-
-def _standalone_send_all(
-    config: NotifyConfig, title: str, content: str
-) -> list[NotifyResult]:
-    """Standalone notification for running outside the original project."""
+    """Send notification to all enabled channels. Returns per-channel results."""
     results: list[NotifyResult] = []
 
+    # Channel registry: (name, enabled_check, send_function)
     channels = [
         ("webhook", config.webhook_enabled, _send_webhook),
         ("telegram", config.telegram_enabled, _send_telegram),
@@ -133,10 +77,10 @@ def _send_webhook(config: NotifyConfig, title: str, content: str) -> None:
 
 def _send_telegram(config: NotifyConfig, title: str, content: str) -> None:
     """Send via Telegram Bot API."""
-    TELEGRAM_MSG_LIMIT = 4096
+    # Telegram has a 4096 char limit, truncate if needed
     message = f"*{title}*\n\n{content}"
-    if len(message) > TELEGRAM_MSG_LIMIT - 96:
-        message = message[: TELEGRAM_MSG_LIMIT - 99] + "..."
+    if len(message) > 4000:
+        message = message[:3997] + "..."
 
     url = f"https://api.telegram.org/bot{config.telegram_bot_token}/sendMessage"
     payload = {
@@ -166,9 +110,11 @@ def _send_email(config: NotifyConfig, title: str, content: str) -> None:
     msg["From"] = config.email_sender
     msg["To"] = ", ".join(config.email_receivers)
 
-    smtp_host = config.email_smtp_host or _guess_smtp_host(
-        config.email_sender.split("@")[-1]
-    )
+    smtp_host = config.email_smtp_host
+    if not smtp_host:
+        # Auto-detect from email domain
+        domain = config.email_sender.split("@")[-1]
+        smtp_host = _guess_smtp_host(domain)
 
     if config.email_smtp_port == 465:
         server = smtplib.SMTP_SSL(smtp_host, config.email_smtp_port, timeout=15)
@@ -186,11 +132,7 @@ def _send_email(config: NotifyConfig, title: str, content: str) -> None:
 
 
 def _guess_smtp_host(domain: str) -> str:
-    """Guess SMTP host from email domain.
-
-    The original project's notification.py has a more complete SMTP_CONFIGS map;
-    this is a minimal fallback for standalone use.
-    """
+    """Guess SMTP host from email domain."""
     known = {
         "qq.com": "smtp.qq.com",
         "163.com": "smtp.163.com",

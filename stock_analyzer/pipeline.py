@@ -117,8 +117,8 @@ class Pipeline:
         # Step 2: Fetch real-time quote (non-fatal if missing)
         quote = self._fetch_quote(stock)
 
-        # Step 3: Technical analysis (delegates to original StockTrendAnalyzer if available)
-        trend = analyze_trend(history, stock_code=stock.code)
+        # Step 3: Technical analysis
+        trend = analyze_trend(history)
 
         # Step 4: AI analysis (optional)
         ai_result = None

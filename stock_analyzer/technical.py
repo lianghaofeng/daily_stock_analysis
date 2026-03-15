@@ -1,10 +1,4 @@
-"""Technical analysis — compute indicators and generate signals.
-
-Delegates to the original project's StockTrendAnalyzer when available (which
-implements the full trading ideology: MA alignment, bias rate, MACD/RSI,
-volume analysis, support/resistance). Falls back to a standalone implementation
-when running independently.
-"""
+"""Technical analysis — compute indicators and generate signals."""
 
 from __future__ import annotations
 
@@ -35,119 +29,8 @@ from .models import OHLCV, SignalStrength, Trend, TechnicalIndicators, TrendAnal
 logger = logging.getLogger(__name__)
 
 
-def analyze_trend(history: list[OHLCV], stock_code: str = "") -> TrendAnalysis:
-    """Perform full technical analysis on historical data.
-
-    Tries the original project's StockTrendAnalyzer first (richer analysis with
-    MACD status enums, RSI multi-period, volume pattern detection, and
-    support/resistance analysis). Falls back to standalone computation.
-    """
-    result = _try_project_analyzer(history, stock_code)
-    if result is not None:
-        return result
-
-    return _standalone_analyze(history)
-
-
-def _try_project_analyzer(
-    history: list[OHLCV], stock_code: str
-) -> Optional[TrendAnalysis]:
-    """Try delegating to the original StockTrendAnalyzer."""
-    try:
-        import pandas as pd
-        from src.stock_analyzer import StockTrendAnalyzer, TrendStatus, BuySignal
-    except ImportError:
-        return None
-
-    if len(history) < MA_SLOW:
-        return None
-
-    # Convert OHLCV list to DataFrame (format expected by StockTrendAnalyzer)
-    records = [
-        {
-            "date": bar.date,
-            "open": bar.open,
-            "high": bar.high,
-            "low": bar.low,
-            "close": bar.close,
-            "volume": bar.volume,
-            "amount": bar.turnover,
-            "pct_chg": 0.0,
-        }
-        for bar in history
-    ]
-    df = pd.DataFrame(records)
-
-    analyzer = StockTrendAnalyzer()
-    result = analyzer.analyze(df, stock_code or "unknown")
-
-    # Map original TrendStatus to our Trend enum
-    trend_map = {
-        TrendStatus.STRONG_BULL: Trend.BULLISH,
-        TrendStatus.BULL: Trend.BULLISH,
-        TrendStatus.WEAK_BULL: Trend.NEUTRAL,
-        TrendStatus.CONSOLIDATION: Trend.NEUTRAL,
-        TrendStatus.WEAK_BEAR: Trend.NEUTRAL,
-        TrendStatus.BEAR: Trend.BEARISH,
-        TrendStatus.STRONG_BEAR: Trend.BEARISH,
-    }
-    trend = trend_map.get(result.trend_status, Trend.NEUTRAL)
-
-    # Map buy signal to signal strength
-    signal_map = {
-        BuySignal.STRONG_BUY: SignalStrength.STRONG,
-        BuySignal.BUY: SignalStrength.MODERATE,
-        BuySignal.HOLD: SignalStrength.WEAK,
-        BuySignal.WAIT: SignalStrength.NONE,
-        BuySignal.SELL: SignalStrength.MODERATE,
-        BuySignal.STRONG_SELL: SignalStrength.STRONG,
-    }
-    signal_strength = signal_map.get(result.buy_signal, SignalStrength.NONE)
-
-    buy_signal = result.buy_signal in (BuySignal.STRONG_BUY, BuySignal.BUY)
-    sell_signal = result.buy_signal in (BuySignal.SELL, BuySignal.STRONG_SELL)
-
-    indicators = TechnicalIndicators(
-        ma5=result.ma5,
-        ma10=result.ma10,
-        ma20=result.ma20,
-        ma60=result.ma60,
-        macd=result.macd_dif,
-        macd_signal=result.macd_dea,
-        macd_hist=result.macd_bar,
-        rsi_6=result.rsi_6,
-        rsi_14=result.rsi_12,  # original uses RSI(12) as mid-period
-    )
-
-    reasons = list(result.signal_reasons)
-    if result.risk_factors:
-        reasons.extend(f"[风险] {r}" for r in result.risk_factors)
-
-    support = min(result.support_levels) if result.support_levels else 0.0
-    resistance = max(result.resistance_levels) if result.resistance_levels else 0.0
-
-    logger.info(
-        "Used original StockTrendAnalyzer for %s: %s / %s",
-        stock_code,
-        result.trend_status.value,
-        result.buy_signal.value,
-    )
-
-    return TrendAnalysis(
-        trend=trend,
-        signal_strength=signal_strength,
-        indicators=indicators,
-        buy_signal=buy_signal,
-        sell_signal=sell_signal,
-        support_price=support,
-        resistance_price=resistance,
-        deviation_rate=result.bias_ma5 / 100.0 if result.bias_ma5 else 0.0,
-        reasons=reasons,
-    )
-
-
-def _standalone_analyze(history: list[OHLCV]) -> TrendAnalysis:
-    """Standalone technical analysis (no external dependencies)."""
+def analyze_trend(history: list[OHLCV]) -> TrendAnalysis:
+    """Perform full technical analysis on historical data."""
     if len(history) < MA_SLOW:
         return TrendAnalysis(
             trend=Trend.NEUTRAL,
